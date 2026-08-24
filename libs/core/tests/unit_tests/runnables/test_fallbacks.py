@@ -412,3 +412,43 @@ def test_fallbacks_getattr_runnable_output() -> None:
         for fallback in llm_with_fallbacks_with_tools.fallbacks
     )
     assert llm_with_fallbacks_with_tools.runnable.kwargs["tools"] == []
+
+
+def _generate_empty(_: Iterator[Any]) -> Iterator[str]:
+    return
+    yield ""  # pragma: no cover - makes this a generator
+
+
+async def _agenerate_empty(_: AsyncIterator[Any]) -> AsyncIterator[str]:
+    return
+    yield ""  # pragma: no cover - makes this an async generator
+
+
+def test_fallbacks_stream_empty_success_does_not_fall_back() -> None:
+    """A cleanly completed empty stream is success, not a fallback trigger."""
+    called: list[bool] = []
+
+    def _fallback(_: Iterator[Any]) -> Iterator[str]:
+        called.append(True)
+        yield "fallback"
+
+    runnable = RunnableGenerator(_generate_empty).with_fallbacks(
+        [RunnableGenerator(_fallback)]
+    )
+    assert list(runnable.stream({})) == []
+    assert not called
+
+
+async def test_fallbacks_astream_empty_success_does_not_fall_back() -> None:
+    """A cleanly completed empty async stream is success, not a fallback trigger."""
+    called: list[bool] = []
+
+    async def _afallback(_: AsyncIterator[Any]) -> AsyncIterator[str]:
+        called.append(True)
+        yield "fallback"
+
+    runnable = RunnableGenerator(_agenerate_empty).with_fallbacks(
+        [RunnableGenerator(_afallback)]
+    )
+    assert [c async for c in runnable.astream({})] == []
+    assert not called

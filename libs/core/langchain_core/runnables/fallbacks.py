@@ -33,6 +33,10 @@ from langchain_core.utils.pydantic import TypeBaseModel
 if TYPE_CHECKING:
     from langchain_core.callbacks.manager import AsyncCallbackManagerForChainRun
 
+# Sentinel used to distinguish a cleanly completed empty stream from an error
+# when peeking at the first chunk of a stream.
+_EMPTY = object()
+
 
 class RunnableWithFallbacks(RunnableSerializable[Input, Output]):
     """`Runnable` that can fallback to other `Runnable` objects if it fails.
@@ -497,7 +501,7 @@ class RunnableWithFallbacks(RunnableSerializable[Input, Output]):
                         input,
                         **kwargs,
                     )
-                    chunk: Output = context.run(next, stream)
+                    first: Any = context.run(next, stream, _EMPTY)
             except self.exceptions_to_handle as e:
                 first_error = e if first_error is None else first_error
                 last_error = e
@@ -511,8 +515,15 @@ class RunnableWithFallbacks(RunnableSerializable[Input, Output]):
             run_manager.on_chain_error(first_error)
             raise first_error
 
-        yield chunk
-        output: Output | None = chunk
+        if first is _EMPTY:
+            # The upstream runnable completed successfully without emitting
+            # anything. An empty stream is a valid result, not a failure, so
+            # do not fall back or emit any chunks.
+            run_manager.on_chain_end(None)
+            return
+
+        yield first
+        output: Output | None = first
         try:
             for chunk in stream:
                 yield chunk
@@ -561,7 +572,9 @@ class RunnableWithFallbacks(RunnableSerializable[Input, Output]):
                         child_config,
                         **kwargs,
                     )
-                    chunk = await coro_with_context(anext(stream), context)
+                    first: Any = await coro_with_context(
+                        anext(stream, _EMPTY), context
+                    )
             except self.exceptions_to_handle as e:
                 first_error = e if first_error is None else first_error
                 last_error = e
@@ -575,8 +588,15 @@ class RunnableWithFallbacks(RunnableSerializable[Input, Output]):
             await run_manager.on_chain_error(first_error)
             raise first_error
 
-        yield chunk
-        output: Output | None = chunk
+        if first is _EMPTY:
+            # The upstream runnable completed successfully without emitting
+            # anything. An empty stream is a valid result, not a failure, so
+            # do not fall back or emit any chunks.
+            await run_manager.on_chain_end(None)
+            return
+
+        yield first
+        output: Output | None = first
         try:
             async for chunk in stream:
                 yield chunk
